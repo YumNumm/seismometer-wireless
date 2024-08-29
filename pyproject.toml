@@ -1,0 +1,4 @@
+[project]
+name = "seismometer-wireless"
+version = "0.1.0"
+dependencies = ["platformio>=6.1.15"]
