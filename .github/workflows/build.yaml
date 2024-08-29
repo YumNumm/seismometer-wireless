@@ -20,8 +20,8 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install PlatformIO
-        run: pip install platformio
+      - name: Install Packages
+        run: pio pkg install
 
       - name: Build All
         run: pio run
