@@ -8,6 +8,8 @@
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
+#include <ArduinoJson.h>
+#include "SPIFFS.h"
 #endif
 
 #include "LSM6DSO.h"
@@ -27,6 +29,8 @@ void serialCommandTask(void *pvParameters);
 
 IntensityProcessor *processor;
 QueueHandle_t displayIntensityQueue;
+QueueHandle_t webSocketSensorDataQueue;
+QueueHandle_t webSocketIntensityQueue;
 
 auto lsm6dso = LSM6DSO();
 void measureTask(void *pvParameters) {
@@ -112,14 +116,15 @@ void wifiTask(void *pvParameters) {
 }
 
 void httpTask(void *pvParameters) {
+    auto xLastWakeTime = xTaskGetTickCount();
+    SPIFFS.begin();
+
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "*");
     AsyncWebServer server(80);
+    AsyncWebSocket ws("/ws");
 
-    server.begin();
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/plain", "Hello World from EQIS(ESP32S3)");
-    });
+    server.addHandler(&ws);
 
     server.on("/hwinfo", HTTP_GET, [](AsyncWebServerRequest *request) {
         char buffer[128];
@@ -127,21 +132,42 @@ void httpTask(void *pvParameters) {
         request->send(200, "text/plain", buffer);
     });
 
-    // 現在の震度を取得する
-    server.on("/intensity", HTTP_GET, [](AsyncWebServerRequest *request) {
-        char buffer[16];
-        if (xQueueReceive(displayIntensityQueue, &rawInt, 0) == pdFALSE && rawInt == NAN) {
-            request->send(500, "text/plain", "NAN");
-            return;
-        }
-        sprintf(buffer, "%.1f", rawInt);
-        request->send(200, "text/plain", buffer);
-    });
+    server.serveStatic("/", SPIFFS, "/www/").setDefaultFile("index.html");
 
+    server.begin();
 
     while (1) {
-        delay(1000);
-    }
+        // 100Hz で動かす
+        xTaskDelayUntil(&xLastWakeTime, configTICK_RATE_HZ / 100);
+
+        ws.cleanupClients();
+        JsonDocument doc;
+        if (!processor->getIsStable())
+            doc["STABLE"] = false;
+        else
+            doc["STABLE"] = true;
+
+        // キューから値を取り出す
+        float rawIntensity;
+        if (xQueueReceive(webSocketIntensityQueue, &rawIntensity, 0) == pdFALSE && rawIntensity == NAN)
+            continue;
+        else
+            doc["INT"] = rawIntensity;
+
+        float acc[3];
+        if (xQueueReceive(webSocketSensorDataQueue, &acc, 0) == pdFALSE && acc[0] == NAN){
+            continue;
+        } else {
+            doc["ACC"]["X"] = acc[0];
+            doc["ACC"]["Y"] = acc[1];
+            doc["ACC"]["Z"] = acc[2];
+        }
+
+        char buffer[128];
+        serializeJson(doc, buffer);
+
+        ws.textAll(buffer);
+	}
 }
 
 
@@ -149,11 +175,16 @@ void setup() {
     Serial.begin(115200);
 
     displayIntensityQueue = xQueueCreate(1, sizeof(float));
+    // (float x, float y, float z)
+    webSocketSensorDataQueue = xQueueCreate(1, sizeof(float) * 3);
+    webSocketIntensityQueue = xQueueCreate(1, sizeof(float));
     processor = new IntensityProcessor([](float sample[3]) {
         printNmea("XSACC,%.3f,%.3f,%.3f", sample[0], sample[1], sample[2]);
+        xQueueOverwrite(webSocketSensorDataQueue, sample);
     }, [](float rawInt) {
         printNmea("XSINT,%.3f,%.2f", -1.0, processor->getIsStable() ? rawInt : NAN);
         xQueueOverwrite(displayIntensityQueue, &rawInt);
+        xQueueOverwrite(webSocketIntensityQueue, &rawInt);
     });
 
 #ifdef ESP32
