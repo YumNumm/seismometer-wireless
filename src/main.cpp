@@ -20,8 +20,8 @@
 // メモ: $はつけない
 void printNmea(const char *format, ...)
 {
-	// シリアルが接続されていない場合は何もしない
-	if(!Serial)
+    // シリアルが接続されていない場合は何もしない
+    if(!Serial)
         return;
     va_list arg;
     va_start(arg, format);

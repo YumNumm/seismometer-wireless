@@ -155,7 +155,7 @@ void httpTask(void *pvParameters) {
             doc["INT"] = rawIntensity;
 
         float acc[3];
-        if (xQueueReceive(webSocketSensorDataQueue, &acc, 0) == pdFALSE && acc[0] == NAN){
+        if (xQueueReceive(webSocketSensorDataQueue, &acc, 0) == pdFALSE && acc[0] == NAN) {
             continue;
         } else {
             doc["ACC"]["X"] = acc[0];
@@ -167,7 +167,7 @@ void httpTask(void *pvParameters) {
         serializeJson(doc, buffer);
 
         ws.textAll(buffer);
-	}
+    }
 }
 
 
